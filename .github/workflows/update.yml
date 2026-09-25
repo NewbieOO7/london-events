@@ -1,0 +1,50 @@
+name: Update events
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # every morning at 05:00 UTC (6am London time in summer)
+  workflow_dispatch: # adds a "Run workflow" button on the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch events
+        run: python3 fetch_events.py
+        env:
+          TICKETMASTER_KEY: ${{ secrets.TICKETMASTER_KEY }}
+          SKIDDLE_KEY: ${{ secrets.SKIDDLE_KEY }}
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      # GitHub pauses scheduled runs in repositories with no activity for 60 days.
+      - name: Keep the daily schedule switched on
+        run: gh workflow enable update.yml || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
