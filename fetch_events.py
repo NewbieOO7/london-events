@@ -245,7 +245,7 @@ def sk_event(r, cat, area):
     name = (r.get("eventname") or "").strip()
     if not name or JUNK.search(name) or str(r.get("cancelled", "0")) not in ("0", ""):
         return None
-    genres = [g.get("name", "") for g in r.get("genres") or []]
+    genres = [g["name"] for g in r.get("genres") or [] if g.get("name")]
     if cat == "concerts" and re.search(r"classical|opera|ballet", " ".join(genres), re.I):
         cat = "classical"
 
@@ -422,8 +422,10 @@ WIKI_WORDS = {
     "theatre": r"musical|play|opera|ballet|show|production|pantomime|stage|theatre|dance|magician|circus|comedy|entertainer",
     "sport": r"tournament|competition|championship|cup|league|event|boxer|darts|wrestl",
 }
-# ...and isn't about something else with the same name.
-WIKI_NOT = r"\bfilm\b|television|\bseries\b|video game|novel|album|\bsong\b|\bsingle\b|\bepisode\b"
+# ...and isn't about something else with the same name (a venue called
+# "The Comedy Store" isn't the Los Angeles club of that name).
+WIKI_NOT = (r"\bfilm\b|television|\bseries\b|video game|novel|album|\bsong\b|\bsingle\b|\bepisode\b|"
+            r"\bclub\b|venue|company|organi[sz]ation|restaurant|\bchain\b|\bbar\b|\bpub\b")
 WIKI_HINT = {"concerts": "musician", "classical": "music", "comedy": "comedian", "theatre": "stage", "sport": ""}
 
 
@@ -484,7 +486,7 @@ def describe(groups):
 
     for g in groups:
         hit = cache.get(g.pop("_key", None)) or {}
-        if hit.get("w"):
+        if hit.get("w") and not re.search(WIKI_NOT, hit["sd"], re.I):  # rechecked as the rules improve
             g.update(w=hit["w"], sd=hit["sd"], x=hit["x"])
 
     os.makedirs(os.path.dirname(WIKI_CACHE), exist_ok=True)
