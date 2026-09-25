@@ -5,34 +5,37 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>What's On</title>
 <meta name="description" content="Concerts, theatre, football and ballet in London and nearby.">
-<meta name="theme-color" content="#1f2a44">
+<meta name="theme-color" content="#7c3aed">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <div class="bar">
+<header class="hero">
+  <div class="hero-inner">
     <h1>What's On</h1>
-    <span id="updated"></span>
-  </div>
-  <div class="controls" id="controls">
-    <input id="search" type="search" placeholder="Search artists, shows, teams, venues…" autocomplete="off" enterkeyhint="search">
-    <div class="chips" id="cats"></div>
+    <p class="sub" id="updated">London &amp; day trips</p>
+    <label class="search">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Artists, shows, teams, venues…" autocomplete="off" enterkeyhint="search" aria-label="Search">
+    </label>
     <div class="filters">
       <select id="when" aria-label="When">
-        <option value="any">Any time</option>
-        <option value="today">Today</option>
-        <option value="weekend">This weekend</option>
-        <option value="week">Next 7 days</option>
-        <option value="month">Next 30 days</option>
-        <option value="custom">Custom dates…</option>
+        <option value="any">📅 Any time</option>
+        <option value="today">📅 Today</option>
+        <option value="weekend">📅 This weekend</option>
+        <option value="week">📅 Next 7 days</option>
+        <option value="month">📅 Next 30 days</option>
+        <option value="custom">📅 Custom dates…</option>
       </select>
       <select id="area" aria-label="Where">
-        <option value="all">London + day trips</option>
-        <option value="london">London only</option>
-        <option value="trips">Day trips only</option>
+        <option value="all">📍 London + day trips</option>
+        <option value="london">📍 London only</option>
+        <option value="trips">📍 Day trips only</option>
       </select>
       <div id="custom" class="range" hidden>
         <label>From <input id="from" type="date"></label>
@@ -42,18 +45,25 @@
   </div>
 </header>
 
+<div class="chips-bar"><div class="chips" id="cats"></div></div>
+
 <main>
-  <p id="count" class="count">Loading events…</p>
-  <ul id="list" class="list"></ul>
+  <p id="count" class="count"></p>
+  <ul id="list" class="list">
+    <li class="card skeleton"><div class="media"></div><div class="body"><div class="line short"></div><div class="line"></div><div class="line short"></div></div></li>
+    <li class="card skeleton"><div class="media"></div><div class="body"><div class="line short"></div><div class="line"></div><div class="line short"></div></div></li>
+    <li class="card skeleton"><div class="media"></div><div class="body"><div class="line short"></div><div class="line"></div><div class="line short"></div></div></li>
+  </ul>
   <button id="more" class="more" hidden>Show more</button>
 </main>
 
 <nav class="tabs">
+  <span class="tab-indicator" aria-hidden="true"></span>
   <button data-tab="all" class="on">Discover</button>
   <button data-tab="saved">Saved <span id="savedCount"></span></button>
 </nav>
 
-<div id="sheet" class="sheet" hidden></div>
+<div id="sheet" class="sheet" aria-hidden="true"></div>
 
 <script src="app.js"></script>
 </body>

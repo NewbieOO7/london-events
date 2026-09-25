@@ -132,48 +132,60 @@ function apply() {
 
 // ---------------------------------------------------------------- rendering
 
-function thumb(g, cls) {
-  if (!g.img) return "";
-  const crest = g.s === "football-data.org" ? " crest" : "";
-  return `<img class="${cls}${crest}" src="${esc(g.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`;
+const HEART = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.3-9.2C1.4 7.9 3.6 4.5 7.1 4.5c2 0 3.5 1.1 4.9 2.9 1.4-1.8 2.9-2.9 4.9-2.9 3.5 0 5.7 3.4 4.4 6.8-1.8 4.6-9.3 9.2-9.3 9.2z" stroke-linejoin="round"/></svg>`;
+
+// Picture with a colourful category background and emoji behind it, which
+// shows through while the picture loads or if it fails.
+function media(g) {
+  const crest = g.s === "football-data.org" ? ' class="crest"' : "";
+  const img = g.img
+    ? `<img${crest} src="${esc(g.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">`
+    : "";
+  return `<div class="media c-${g.c}" data-emoji="${CATS[g.c][1]}">${img}`;
 }
 
-function card({ g, dates }) {
-  const [label, icon] = CATS[g.c];
+function card({ g, dates }, i) {
   const place = g.a && g.a !== "London" ? `${g.v} · ${g.a}` : g.v;
-  const extra = dates.length > 1 ? ` <span class="more-dates">+${dates.length - 1} more</span>` : "";
+  const extra = dates.length > 1 ? ` <span>+${dates.length - 1} more</span>` : "";
   const price = fmtPrice(g);
   const kind = g.sd || g.g;
-  return `<li class="card" data-id="${esc(g.id)}">
-    <div class="thumb">${thumb(g, "") || icon}</div>
-    <div class="info">
-      <p class="kind"><span class="tag c-${g.c}">${label}</span>${kind ? ` · ${esc(kind)}` : ""}</p>
+  return `<li class="card c-${g.c}" data-id="${esc(g.id)}" style="--i:${Math.min(i, 12)}">
+    ${media(g)}
+      <span class="badge">${CATS[g.c][0]}</span>
+      ${price ? `<span class="price-pill">${price}</span>` : ""}
+      <button class="heart${saved[g.id] ? " on" : ""}" data-star="${esc(g.id)}" aria-label="Save">${HEART}</button>
+    </div>
+    <div class="body">
+      <p class="date">${dates.length ? fmtWhen(dates[0]) + extra : "No upcoming dates"}</p>
       <h3>${esc(g.t)}</h3>
       <p class="meta">${esc(place)}</p>
-      <p class="when">${dates.length ? fmtWhen(dates[0]) + extra : "No upcoming dates"}${price ? ` · <span class="price">${price}</span>` : ""}</p>
+      ${kind ? `<p class="kind">${esc(kind)}</p>` : ""}
     </div>
-    <button class="star${saved[g.id] ? " on" : ""}" data-star="${esc(g.id)}" aria-label="Save">★</button>
   </li>`;
 }
 
-function render() {
+// Draws the list; with `from` set, only adds the next batch to the bottom.
+function render(from = 0) {
   const list = $("#list");
   const n = shown.length;
   if (!n) {
-    list.innerHTML = "";
     $("#count").textContent = "";
-    list.innerHTML = `<li class="empty">${
-      tab === "saved"
-        ? "Nothing saved yet. Tap ★ on any event to keep it here."
-        : "No events match. Try another date, area or category."
-    }</li>`;
+    list.innerHTML = tab === "saved"
+      ? `<li class="empty"><b>💜</b>Nothing saved yet.<br>Tap the heart on any event to keep it here.</li>`
+      : `<li class="empty"><b>🔍</b>No events match.<br>Try another date, area or category.</li>`;
   } else {
     $("#count").textContent = `${n.toLocaleString("en-GB")} ${n === 1 ? "event" : "events"}`;
-    list.innerHTML = shown.slice(0, limit).map(card).join("");
+    const html = shown.slice(from, limit).map(card).join("");
+    if (from) list.insertAdjacentHTML("beforeend", html);
+    else list.innerHTML = html;
   }
   $("#more").hidden = limit >= n;
-  const savedN = Object.keys(saved).length;
-  $("#savedCount").textContent = savedN ? `(${savedN})` : "";
+  updateSavedCount();
+}
+
+function updateSavedCount() {
+  const n = Object.keys(saved).length;
+  $("#savedCount").textContent = n ? `(${n})` : "";
 }
 
 // ------------------------------------------------------------------ detail
@@ -201,10 +213,10 @@ function calendarUrl(g, [when, url]) {
   return "https://calendar.google.com/calendar/render?" + params;
 }
 
-function dateRow(g, x) {
+function dateRow(g, x, i) {
   const linkLabel = g.s === "football-data.org" ? "Club site" : "Tickets";
   const tbc = x[2] ? " <em>(time TBC)</em>" : "";
-  return `<li>
+  return `<li style="--i:${Math.min(i, 10)}">
     <span>${fmtWhen(x)}${tbc}</span>
     ${x[1] ? `<a class="btn" href="${esc(x[1])}" target="_blank" rel="noopener">${linkLabel}</a>` : ""}
     <a class="btn ghost" href="${esc(calendarUrl(g, x))}" target="_blank" rel="noopener" aria-label="Add to calendar">📅</a>
@@ -218,30 +230,35 @@ function openDetail(id, showAll = false) {
   const upcoming = g.d.filter((x) => x[0].slice(0, 10) >= today);
   const visible = showAll ? upcoming : upcoming.slice(0, 20);
   const map = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(`${g.v}, ${g.a}`);
-  const hero = thumb(g, "hero") || `<div class="no-hero"></div>`;
+  const price = fmtPrice(g) || (g.s === "football-data.org" ? "On the club's website" : `On ${esc(g.s)} – tap Tickets`);
+  const wiki = g.w
+    ? ` <a class="wiki" href="https://en.wikipedia.org/wiki/${encodeURIComponent(g.w.replace(/ /g, "_"))}" target="_blank" rel="noopener">Wikipedia</a>`
+    : "";
 
-  $("#sheet").innerHTML = `<div class="sheet-inner">
+  $("#sheet").innerHTML = `<div class="sheet-inner c-${g.c}">
     <button class="close" data-close aria-label="Close">←</button>
-    ${hero}
-    <div class="pad">
-      <span class="tag c-${g.c}">${CATS[g.c][0]}</span>${g.g ? `<span class="genre">${esc(g.g)}</span>` : ""}
+    ${media(g)}</div>
+    <div class="sheet-body">
+      <span class="badge">${CATS[g.c][0]}</span>
       <h2>${esc(g.t)}</h2>
-      ${g.x ? `<p class="desc">${esc(g.x)}${g.w ? ` <a class="wiki" href="https://en.wikipedia.org/wiki/${encodeURIComponent(g.w.replace(/ /g, "_"))}" target="_blank" rel="noopener">Wikipedia</a>` : ""}</p>` : ""}
-      <ul class="facts">
-        <li>📍 <a href="${esc(map)}" target="_blank" rel="noopener">${esc(g.v)}${g.a ? ", " + esc(g.a) : ""}</a></li>
-        <li>💷 ${fmtPrice(g) || (g.s === "football-data.org" ? "Prices on the club's website" : `Prices on ${esc(g.s)} – tap Tickets`)}</li>
+      ${g.sd || g.g ? `<p class="kind">${esc(g.sd || g.g)}</p>` : ""}
+      ${g.x ? `<p class="desc">${esc(g.x)}${wiki}</p>` : ""}
+      <ul class="tiles">
+        <li><span class="ico">📍</span><div><small>Venue</small><a href="${esc(map)}" target="_blank" rel="noopener">${esc(g.v)}${g.a ? ", " + esc(g.a) : ""}</a></div></li>
+        <li><span class="ico">💷</span><div><small>Price</small><b>${price}</b></div></li>
       </ul>
-      <button class="save-big${saved[g.id] ? " on" : ""}" data-star="${esc(g.id)}">${saved[g.id] ? "★ Saved" : "☆ Save"}</button>
+      ${saveButton(g.id)}
       <h4>${upcoming.length ? `${upcoming.length} upcoming ${upcoming.length === 1 ? "date" : "dates"}` : "No upcoming dates"}</h4>
-      <ul class="dates">${visible.map((x) => dateRow(g, x)).join("")}</ul>
+      <ul class="dates">${visible.map((x, i) => dateRow(g, x, i)).join("")}</ul>
       ${visible.length < upcoming.length ? `<button class="more all-dates" data-all="${esc(g.id)}">Show all ${upcoming.length} dates</button>` : ""}
       <p class="src">Listing from ${esc(g.s)}. Check the ticket site for final details.</p>
     </div>
   </div>`;
 
   const sheet = $("#sheet");
-  if (sheet.hidden) {
-    sheet.hidden = false;
+  if (!sheet.classList.contains("open")) {
+    sheet.classList.add("open");
+    sheet.setAttribute("aria-hidden", "false");
     document.body.classList.add("locked");
     history.pushState({ detail: id }, ""); // so the phone's back button closes it
   }
@@ -249,11 +266,16 @@ function openDetail(id, showAll = false) {
 }
 
 function closeDetail() {
-  $("#sheet").hidden = true;
+  const sheet = $("#sheet");
+  sheet.classList.remove("open");
+  sheet.setAttribute("aria-hidden", "true");
   document.body.classList.remove("locked");
 }
 
 // ------------------------------------------------------------------- saving
+
+const saveButton = (id) =>
+  `<button class="save-big${saved[id] ? " on" : ""}" data-star="${esc(id)}">${saved[id] ? "♥ Saved" : "♡ Save to my list"}</button>`;
 
 function toggleSave(id) {
   const g = find(id);
@@ -261,9 +283,20 @@ function toggleSave(id) {
   if (saved[id]) delete saved[id];
   else saved[id] = g;
   store.set("saved", saved);
-  if (!$("#sheet").hidden) openDetail(id);
+
+  // Update every heart for this event in place so nothing jumps around.
+  for (const el of document.querySelectorAll(`[data-star="${CSS.escape(id)}"]`)) {
+    if (el.classList.contains("save-big")) {
+      el.outerHTML = saveButton(id);
+    } else {
+      el.classList.toggle("on", !!saved[id]);
+      el.classList.remove("pop");
+      void el.offsetWidth; // restart the animation
+      el.classList.add("pop");
+    }
+  }
+  updateSavedCount();
   if (tab === "saved") apply();
-  else render();
 }
 
 // ------------------------------------------------------------------- wiring
@@ -275,7 +308,7 @@ function saveFilters() {
 
 function setupControls() {
   $("#cats").innerHTML = Object.entries(CATS)
-    .map(([key, [label]]) => `<button class="chip c-${key}" data-cat="${key}" aria-pressed="${state.cats.includes(key)}">${label}</button>`)
+    .map(([key, [label, icon]]) => `<button class="chip c-${key}" data-cat="${key}" aria-pressed="${state.cats.includes(key)}">${icon} ${label}</button>`)
     .join("");
   $("#cats").addEventListener("click", (e) => {
     const chip = e.target.closest("[data-cat]");
@@ -353,8 +386,9 @@ function setupControls() {
 
   const more = $("#more");
   const showMore = () => {
+    const from = limit;
     limit += PAGE;
-    render();
+    render(from);
   };
   more.addEventListener("click", showMore);
   new IntersectionObserver((entries) => {
@@ -378,7 +412,7 @@ async function load() {
     const res = await fetch("events.json", { cache: "no-cache" });
     data = await res.json();
   } catch {
-    $("#count").textContent = "Couldn't load events. Check your internet connection and reopen the app.";
+    $("#list").innerHTML = `<li class="empty"><b>📡</b>Couldn't load events.<br>Check your internet connection and reopen the app.</li>`;
     return;
   }
   events = data.events;
@@ -395,13 +429,13 @@ async function load() {
     "beforeend",
     `<optgroup label="Day trips">${data.areas
       .filter((a) => a !== "London" && counts[a])
-      .map((a) => `<option value="${esc(a)}">${esc(a)}</option>`)
+      .map((a) => `<option value="${esc(a)}">📍 ${esc(a)}</option>`)
       .join("")}</optgroup>`
   );
   area.value = state.area;
   if (area.value !== state.area) state.area = area.value = "all";
 
-  $("#updated").textContent = fmtUpdated(data.updated);
+  $("#updated").textContent = `London & day trips · ${fmtUpdated(data.updated)}`;
   apply();
 }
 
