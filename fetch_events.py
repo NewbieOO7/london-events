@@ -14,10 +14,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 DAYS_AHEAD = 180
-OUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "site", "events.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_FILE = os.path.join(HERE, "site", "events.json")
+WIKI_CACHE = os.path.join(HERE, "cache", "wiki.json")  # kept between runs by the GitHub workflow
 
 # London plus places roughly two hours or less away by train.
 # (name, latitude, longitude, search radius in miles)
@@ -105,6 +108,16 @@ def to_float(value):
         return None
 
 
+def shorten(text, limit=300):
+    """Tidies whitespace and cuts text to about `limit` characters, ending on a sentence or word."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = cut.rfind(". ")
+    return cut[: end + 1] if end > limit * 0.5 else cut[: cut.rfind(" ")] + "…"
+
+
 # ---------------------------------------------------------------- Ticketmaster
 
 TM_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
@@ -157,10 +170,12 @@ def tm_event(e, area):
     prices = [p["min"] for p in e.get("priceRanges", []) if p.get("min")]
     t = "" if start.get("noSpecificTime") else (start.get("localTime") or "")[:5]
     label = next((g for g in (subgenre, genre) if g and g not in ("Undefined", "Other", "Miscellaneous")), "")
+    attractions = e.get("_embedded", {}).get("attractions") or [{}]
 
     return {
         "id": "tm" + e["id"],
         "title": name,
+        "artist": attractions[0].get("name") or name,
         "cat": cat,
         "genre": label,
         "venue": venue.get("name", ""),
@@ -169,6 +184,7 @@ def tm_event(e, area):
         "url": e.get("url", ""),
         "img": tm_image(e.get("images", [])),
         "price": min(prices) if prices else None,
+        "price_max": max((p.get("max") or 0 for p in e.get("priceRanges", [])), default=0) or None,
         "src": "Ticketmaster",
     }
 
@@ -237,14 +253,17 @@ def sk_event(r, cat, area):
     lat, lon = to_float(venue.get("latitude")), to_float(venue.get("longitude"))
     # Skiddle labels local times as +00:00, so the clock time is used as-is.
     t = (r.get("startdate") or "")[11:16]
-    price = (r.get("ticketpricing") or {}).get("minPrice")
+    pricing = r.get("ticketpricing") or {}
+    price, price_max = pricing.get("minPrice"), pricing.get("maxPrice")
     if price is None:
-        m = re.search(r"\d+(\.\d+)?", r.get("entryprice") or "")
-        price = float(m.group()) if m else None
+        entry = r.get("entryprice") or ""
+        m = re.search(r"\d+(\.\d+)?", entry)
+        price = float(m.group()) if m else (0 if re.search(r"\bfree\b", entry, re.I) else None)
 
     return {
         "id": "sk" + str(r["id"]),
         "title": name,
+        "artist": name,
         "cat": cat,
         "genre": genres[0] if genres else "",
         "venue": venue.get("name", ""),
@@ -253,6 +272,8 @@ def sk_event(r, cat, area):
         "url": r.get("link", ""),
         "img": r.get("largeimageurl") or r.get("imageurl") or "",
         "price": price,
+        "price_max": price_max,
+        "desc": shorten(re.sub(r"<[^>]+>", " ", r.get("description") or "")),
         "src": "Skiddle",
     }
 
@@ -275,7 +296,7 @@ def skiddle():
                     "limit": 100,
                     "offset": offset,
                     "order": "date",
-                    "description": 0,
+                    "description": 1,
                 })
                 time.sleep(0.3)
                 results = data.get("results") or []
@@ -333,6 +354,7 @@ def football():
             ev = {
                 "id": f"fd{m['id']}",
                 "title": f"{m['homeTeam']['shortName']} vs {m['awayTeam']['shortName']}",
+                "artist": "",
                 "cat": "football",
                 "genre": comp,
                 "venue": home.get("venue") or "",
@@ -341,6 +363,7 @@ def football():
                 "url": home.get("website") or "",
                 "img": home.get("crest") or "",
                 "price": None,
+                "price_max": None,
                 "src": "football-data.org",
             }
             if m["status"] == "SCHEDULED":  # kick-off time not confirmed yet
@@ -371,14 +394,105 @@ def build(events):
         if not g:
             g = groups[key] = {
                 "id": e["id"], "t": e["title"], "c": e["cat"], "g": e["genre"], "v": e["venue"],
-                "a": e["area"], "img": e["img"], "p": e["price"], "s": e["src"], "d": [],
+                "a": e["area"], "img": e["img"], "s": e["src"], "d": [], "_artist": e["artist"],
             }
-        elif e["price"] is not None and (g["p"] is None or e["price"] < g["p"]):
+        if e.get("desc") and not g.get("x"):
+            g["x"] = e["desc"]
+        if e["price"] is not None and e["price"] < g.get("p", math.inf):
             g["p"] = e["price"]
+        if e["price_max"] and e["price_max"] > g.get("pm", 0):
+            g["pm"] = e["price_max"]
         if g["d"] and g["d"][-1][0] == e["when"]:
             continue
         g["d"].append([e["when"], e["url"]] + ([1] if e.get("tbc") else []))
     return sorted(groups.values(), key=lambda g: g["d"][0][0])
+
+
+# -------------------------------------------------------------------- Wikipedia
+
+WIKI_URL = "https://en.wikipedia.org/w/api.php"
+WIKI_BUDGET = 30 * 60  # seconds per run; any names left over are looked up the next day
+MUSIC_WORDS = (r"band|singer|musician|rapper|\bdj\b|disc jockey|songwriter|duo|group|orchestra|composer|"
+               r"producer|guitarist|pianist|vocalist|drummer|choir|ensemble|music")
+# A Wikipedia page is only used if its short description fits the kind of event...
+WIKI_WORDS = {
+    "concerts": MUSIC_WORDS,
+    "classical": MUSIC_WORDS + r"|opera|ballet|conductor|violinist|cellist|soprano|tenor|baritone|dance|symphony",
+    "comedy": r"comedian|comedy|comic|humorist|satirist|presenter|entertainer",
+    "theatre": r"musical|play|opera|ballet|show|production|pantomime|stage|theatre|dance|magician|circus|comedy|entertainer",
+    "sport": r"tournament|competition|championship|cup|league|event|boxer|darts|wrestl",
+}
+# ...and isn't about something else with the same name.
+WIKI_NOT = r"\bfilm\b|television|\bseries\b|video game|novel|album|\bsong\b|\bsingle\b|\bepisode\b"
+WIKI_HINT = {"concerts": "musician", "classical": "music", "comedy": "comedian", "theatre": "stage", "sport": ""}
+
+
+def wiki_lookup(name, cat):
+    """Returns the Wikipedia page title, short description and intro for a
+    performer or show, or {} when there's no confident match."""
+    for query in dict.fromkeys((name, f"{name} {WIKI_HINT[cat]}".strip())):
+        data = get_json(WIKI_URL, {
+            "action": "query", "generator": "search", "gsrsearch": query, "gsrlimit": 6,
+            "prop": "extracts|description", "exintro": 1, "explaintext": 1, "exsentences": 3, "exlimit": 6,
+            "redirects": 1, "format": "json", "formatversion": 2,
+        }, headers={"User-Agent": "london-events/1.0 (https://github.com/NewbieOO7/london-events)"})
+        for p in sorted(data.get("query", {}).get("pages", []), key=lambda p: p["index"]):
+            title = re.sub(r"\s*\(.*\)$", "", p["title"])
+            desc = p.get("description", "")
+            if norm(title) == norm(name) and re.search(WIKI_WORDS[cat], desc, re.I) and not re.search(WIKI_NOT, desc, re.I):
+                return {"w": p["title"], "sd": desc, "x": shorten(p.get("extract", ""))}
+    return {}
+
+
+def describe(groups):
+    try:
+        with open(WIKI_CACHE, encoding="utf-8") as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        cache = {}
+    today = datetime.now(timezone.utc).date()
+    retry_before = (today - timedelta(days=30)).isoformat()  # names with no match get another try monthly
+    started, looked_up = time.time(), 0
+
+    # Work out which names need looking up (soonest events first).
+    pending = {}
+    for g in groups:
+        artist = re.split(r"\s+[-–—:|]\s+|\s*\(|\s+(?:live|tour)\b", g.pop("_artist"), flags=re.I)[0].strip()
+        if g["c"] == "football" or g.get("x") or len(artist) < 2:
+            continue
+        g["_key"] = key = f"{g['c']}|{artist}"
+        hit = cache.get(key)
+        if hit is None or (not hit.get("w") and hit.get("at", "") < retry_before):
+            pending[key] = (artist, g["c"])
+
+    def work(item):
+        key, (artist, cat) = item
+        if time.time() - started > WIKI_BUDGET:
+            return key, None
+        try:
+            return key, wiki_lookup(artist, cat)
+        except Exception as e:
+            print(f"Wikipedia lookup failed for {artist!r}: {e!r}")
+            return key, None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for key, hit in pool.map(work, pending.items()):
+            if hit is not None:
+                hit["at"] = today.isoformat()
+                cache[key] = hit
+                looked_up += 1
+
+    for g in groups:
+        hit = cache.get(g.pop("_key", None)) or {}
+        if hit.get("w"):
+            g.update(w=hit["w"], sd=hit["sd"], x=hit["x"])
+
+    os.makedirs(os.path.dirname(WIKI_CACHE), exist_ok=True)
+    with open(WIKI_CACHE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False)
+    described = sum(1 for g in groups if g.get("x"))
+    print(f"Wikipedia: {looked_up} of {len(pending)} pending names looked up ({time.time() - started:.0f}s); "
+          f"{described} of {len(groups)} events have a description")
 
 
 def main():
@@ -396,6 +510,7 @@ def main():
     print(f"Total after grouping: {len(groups)}")
     if len(groups) < 100:
         sys.exit("Too few events - something is wrong, not publishing.")
+    describe(groups)
 
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
     with open(OUT_FILE, "w", encoding="utf-8") as f:

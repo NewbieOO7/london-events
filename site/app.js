@@ -35,7 +35,8 @@ let shown = [];
 let limit = PAGE;
 let tab = "all";
 let saved = store.get("saved", {});
-const state = { cats: Object.keys(CATS), when: "any", date: "", area: "all", ...store.get("filters", {}), q: "" };
+const state = { cats: Object.keys(CATS), when: "any", from: "", to: "", area: "all", ...store.get("filters", {}), q: "" };
+if (state.when === "date") state.when = "custom"; // older single-date setting
 
 // ------------------------------------------------------------------ dates
 
@@ -61,10 +62,20 @@ function range() {
       return [today, addDays(today, 6)];
     case "month":
       return [today, addDays(today, 29)];
-    case "date":
-      if (state.date) return [state.date, state.date];
+    case "custom": {
+      let from = state.from > today ? state.from : today;
+      let to = state.to || "9999";
+      if (to < from) [from, to] = [to, from];
+      return [from, to];
+    }
   }
   return [today, "9999"];
+}
+
+function fmtPrice(g) {
+  if (g.p == null) return "";
+  const money = (n) => (n ? "£" + (n % 1 ? n.toFixed(2) : n) : "Free");
+  return g.pm > g.p ? `${money(g.p)} – ${money(g.pm)}` : money(g.p);
 }
 
 function fmtWhen([when]) {
@@ -84,7 +95,7 @@ function fmtUpdated(iso) {
 
 // --------------------------------------------------------------- filtering
 
-const hay = (g) => (g._h ??= `${g.t} ${g.v} ${g.a} ${g.g}`.toLowerCase());
+const hay = (g) => (g._h ??= `${g.t} ${g.v} ${g.a} ${g.g} ${g.sd || ""}`.toLowerCase());
 
 function inArea(g) {
   if (state.area === "all") return true;
@@ -131,13 +142,15 @@ function card({ g, dates }) {
   const [label, icon] = CATS[g.c];
   const place = g.a && g.a !== "London" ? `${g.v} · ${g.a}` : g.v;
   const extra = dates.length > 1 ? ` <span class="more-dates">+${dates.length - 1} more</span>` : "";
+  const price = fmtPrice(g);
+  const kind = g.sd || g.g;
   return `<li class="card" data-id="${esc(g.id)}">
     <div class="thumb">${thumb(g, "") || icon}</div>
     <div class="info">
-      <span class="tag c-${g.c}">${label}</span>
+      <p class="kind"><span class="tag c-${g.c}">${label}</span>${kind ? ` · ${esc(kind)}` : ""}</p>
       <h3>${esc(g.t)}</h3>
       <p class="meta">${esc(place)}</p>
-      <p class="when">${dates.length ? fmtWhen(dates[0]) + extra : "No upcoming dates"}</p>
+      <p class="when">${dates.length ? fmtWhen(dates[0]) + extra : "No upcoming dates"}${price ? ` · <span class="price">${price}</span>` : ""}</p>
     </div>
     <button class="star${saved[g.id] ? " on" : ""}" data-star="${esc(g.id)}" aria-label="Save">★</button>
   </li>`;
@@ -213,9 +226,10 @@ function openDetail(id, showAll = false) {
     <div class="pad">
       <span class="tag c-${g.c}">${CATS[g.c][0]}</span>${g.g ? `<span class="genre">${esc(g.g)}</span>` : ""}
       <h2>${esc(g.t)}</h2>
+      ${g.x ? `<p class="desc">${esc(g.x)}${g.w ? ` <a class="wiki" href="https://en.wikipedia.org/wiki/${encodeURIComponent(g.w.replace(/ /g, "_"))}" target="_blank" rel="noopener">Wikipedia</a>` : ""}</p>` : ""}
       <ul class="facts">
         <li>📍 <a href="${esc(map)}" target="_blank" rel="noopener">${esc(g.v)}${g.a ? ", " + esc(g.a) : ""}</a></li>
-        ${g.p != null ? `<li>💷 From £${Number(g.p).toFixed(g.p % 1 ? 2 : 0)}</li>` : ""}
+        <li>💷 ${fmtPrice(g) || (g.s === "football-data.org" ? "Prices on the club's website" : `Prices on ${esc(g.s)} – tap Tickets`)}</li>
       </ul>
       <button class="save-big${saved[g.id] ? " on" : ""}" data-star="${esc(g.id)}">${saved[g.id] ? "★ Saved" : "☆ Save"}</button>
       <h4>${upcoming.length ? `${upcoming.length} upcoming ${upcoming.length === 1 ? "date" : "dates"}` : "No upcoming dates"}</h4>
@@ -274,25 +288,37 @@ function setupControls() {
   });
 
   const when = $("#when");
-  const date = $("#date");
+  const custom = $("#custom");
+  const from = $("#from");
+  const to = $("#to");
+  const syncDates = () => {
+    from.value = state.from;
+    to.value = state.to;
+    from.min = londonToday();
+    to.min = state.from || londonToday();
+    custom.hidden = state.when !== "custom";
+  };
   when.value = state.when;
-  date.value = state.date;
-  date.min = londonToday();
-  date.hidden = state.when !== "date";
+  syncDates();
   when.addEventListener("change", () => {
     state.when = when.value;
-    date.hidden = state.when !== "date";
-    if (state.when === "date" && !state.date) {
-      state.date = date.value = londonToday();
+    if (state.when === "custom" && (!state.from || state.from < londonToday())) {
+      state.from = londonToday();
+      state.to = addDays(state.from, 6);
     }
+    syncDates();
     saveFilters();
     apply();
   });
-  date.addEventListener("change", () => {
-    state.date = date.value;
-    saveFilters();
-    apply();
-  });
+  for (const input of [from, to]) {
+    input.addEventListener("change", () => {
+      state[input.id] = input.value;
+      if (state.from && state.to && state.to < state.from) state.to = state.from;
+      syncDates();
+      saveFilters();
+      apply();
+    });
+  }
 
   $("#area").addEventListener("change", (e) => {
     state.area = e.target.value;

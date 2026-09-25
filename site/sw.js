@@ -1,6 +1,6 @@
 // Lets the app open offline. Always tries the network first so new events and
 // app updates show up straight away, and falls back to the saved copy offline.
-const CACHE = "whats-on-v1";
+const CACHE = "whats-on-v2";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

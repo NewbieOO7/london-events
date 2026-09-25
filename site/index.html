@@ -27,14 +27,17 @@
         <option value="weekend">This weekend</option>
         <option value="week">Next 7 days</option>
         <option value="month">Next 30 days</option>
-        <option value="date">Pick a date…</option>
+        <option value="custom">Custom dates…</option>
       </select>
-      <input id="date" type="date" aria-label="Date" hidden>
       <select id="area" aria-label="Where">
         <option value="all">London + day trips</option>
         <option value="london">London only</option>
         <option value="trips">Day trips only</option>
       </select>
+      <div id="custom" class="range" hidden>
+        <label>From <input id="from" type="date"></label>
+        <label>To <input id="to" type="date"></label>
+      </div>
     </div>
   </div>
 </header>

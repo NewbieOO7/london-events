@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Remembers Wikipedia descriptions between runs so each name is only looked up once.
+      - uses: actions/cache@v4
+        with:
+          path: cache
+          key: wiki-${{ github.run_id }}
+          restore-keys: wiki-
+
       - name: Fetch events
         run: python3 fetch_events.py
         env:

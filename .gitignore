@@ -1,3 +1,4 @@
 # Generated every day by the GitHub workflow
 site/events.json
+cache/
 __pycache__/
